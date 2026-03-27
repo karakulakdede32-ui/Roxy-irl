@@ -10,4 +10,4 @@ To run this project, ensure you have the following:
 * **Terminal:** PowerShell or CMD
 
 ## Download
-You can find the latest stable version on the [Releases Page](https://github.com/DEIN-NUTZERNAME/Roxy-irl/releases).
+You can find the latest stable version on the [Releases Page](https://github.com/karakulakdede32-ui/Roxy-irl/releases).
