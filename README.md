@@ -1,5 +1,5 @@
 # Roxy-irl
 
-## Needed: 
-
-Nothing yet.
+## Specifications
+-Windows 10/11
+-working python enviroment
