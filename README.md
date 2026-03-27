@@ -1,6 +1,6 @@
 # Roxy-irl
 
-Ein kurzer Satz hier, was Roxy-irl eigentlich macht (z. B. "Ein Tool für...").
+An AI test of Roxy(FNAF SB)
 
 ## Prerequisites
 To run this project, ensure you have the following:
