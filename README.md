@@ -1,6 +1,6 @@
 # Roxy-irl
 
-An AI test of Roxy(FNAF SB)
+An AI test of Roxy(FNAF SB), built to respond and act as an local or api dependant(api can be configured in config.json) assistant which with further coding can be optimized and refined.
 
 ## Prerequisites
 To run this project, ensure you have the following:
