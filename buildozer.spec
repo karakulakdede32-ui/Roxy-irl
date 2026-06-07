@@ -14,6 +14,7 @@ fullscreen = 1
 android.permissions = INTERNET
 android.enable_androidx = True
 android.package_name = org.roxy.irl
+android.accept_sdk_license = True
 version = 1.0
 version.code = 1
 
