@@ -17,16 +17,52 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y zlib1g-dev libncurses5-dev openjdk-17-jdk
+          sudo apt-get install -y zlib1g-dev libncurses5-dev openjdk-17-jdk wget unzip
+
+      - name: Install Buildozer
+        run: |
           pip install --upgrade buildozer cython
+
+      - name: Setup Android SDK & accept licenses
+        run: |
+          # Create Android SDK directory
+          export ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p $ANDROID_HOME/licenses
+          mkdir -p $ANDROID_HOME/cmdline-tools/latest
+
+          # Download command line tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdline-tools.zip
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          mv /tmp/cmdline-tools/cmdline-tools/* $ANDROID_HOME/cmdline-tools/latest/
+          rm -rf /tmp/cmdline-tools /tmp/cmdline-tools.zip
+
+          # Accept all licenses
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>&1 || true
+          
+          # Also directly write license files
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_HOME/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_HOME/licenses/android-sdk-license
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> $ANDROID_HOME/licenses/android-sdk-license
+
+          # Install required SDK platforms
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" 2>&1 || true
+
+          echo "SDK setup complete"
 
       - name: Build APK
         run: |
           export CI=true
-          buildozer android debug 2>&1
+          export ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
+          # Run buildozer with auto-yes
+          yes | buildozer android debug 2>&1
+
+      - name: List build artifacts
+        run: |
+          echo "Checking for APK..."
+          find ${{ github.workspace }} -name "*.apk" 2>/dev/null
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
