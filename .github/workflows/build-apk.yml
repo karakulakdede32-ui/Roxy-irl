@@ -16,7 +16,9 @@ jobs:
 
       - name: Build APK
         run: |
-          CI=true buildozer android debug 2>&1 | tee buildozer.log
+          export CI=true
+          export BUILDOZER_ROOT_ACCEPT=1
+          buildozer android debug 2>&1 | tee buildozer.log
         shell: bash
         timeout-minutes: 60
 

@@ -23,3 +23,4 @@ log_level = 1
 jobs = 4
 bin_dir = ./bin
 android.archs = arm64-v8a
+warn_on_root = 0
