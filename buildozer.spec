@@ -25,7 +25,6 @@ source.exclude_exts = spec
 requirements = python3,kivy,kivymd
 
 # (str) Custom source folders for requirements
-requirements.source.kivymd = /tmp/roxy-venv/lib/python3.12/site-packages/kivymd
 
 # (str) Presplash of the application
 presplash.filename = %(source.dir)s/data/presplash.png
@@ -76,15 +75,6 @@ version.name = 1.0
 # (bool) Enable pause/resume on Android
 android.wakelock = False
 
-# (str) Add extra Java arguments
-android.add_jars = None
-
-# (bool) Enable gps
-android.gps = False
-
-# (str) Python for android branch
-p4a.branch = develop
-
 [buildozer]
 
 # (int) Log level (0 = error only, 1 = info, 2 = debug)
@@ -99,8 +89,5 @@ build_dir = ./.buildozer
 # (str) Directory where the bin package is created
 bin_dir = ./bin
 
-# (str) Directory where the Android project is created
-android.project_dir = ./.buildozer/android/platform/build-armeabi-v7a/dists/RoxyIRL
-
 # (str) Android arch to build for
-android.arch = armeabi-v7a
+android.archs = arm64-v8a
