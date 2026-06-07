@@ -14,10 +14,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build APK
+      - name: Accept SDK licenses and Build APK
         run: |
-          export CI=true
-          export BUILDOZER_ROOT_ACCEPT=1
+          # Set CI to avoid interactive prompts
+          export CI=1
+          
+          # The kivy/buildozer image may have SDK at /home/user/.buildozer
+          # First check what's available
+          echo "Checking for pre-installed SDK..."
+          ls -la /home/user/.buildozer/android/platform/ 2>/dev/null || echo "No pre-installed SDK"
+          
+          # Create license files for any SDK that might exist
+          mkdir -p /home/user/.buildozer/android/platform/android-sdk/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > /home/user/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> /home/user/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> /home/user/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          
+          # Also create for buildozer's expected download path
+          mkdir -p /root/.buildozer/android/platform/android-sdk/licenses 2>/dev/null || true
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > /root/.buildozer/android/platform/android-sdk/licenses/android-sdk-license 2>/dev/null || true
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> /root/.buildozer/android/platform/android-sdk/licenses/android-sdk-license 2>/dev/null || true
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> /root/.buildozer/android/platform/android-sdk/licenses/android-sdk-license 2>/dev/null || true
+          
+          # Check which user we are
+          whoami
+          
+          # Build!
           buildozer android debug 2>&1 | tee buildozer.log
         shell: bash
         timeout-minutes: 60
