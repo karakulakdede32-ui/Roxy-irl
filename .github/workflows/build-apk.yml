@@ -8,17 +8,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: kivy/buildozer:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Build APK with Buildozer
+      - name: Build APK with kivy/buildozer Docker
         run: |
-          yes | buildozer android debug
+          docker run --rm -v $PWD:/app -w /app kivy/buildozer:latest /bin/bash -c "yes | buildozer android debug"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
