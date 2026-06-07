@@ -10,15 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: kivy/buildozer:latest
-    env:
-      CI: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Build APK
         run: |
-          buildozer android debug 2>&1 | tee buildozer.log
+          CI=true buildozer android debug 2>&1 | tee buildozer.log
         shell: bash
         timeout-minutes: 60
 
