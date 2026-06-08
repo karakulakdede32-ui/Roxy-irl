@@ -6,20 +6,26 @@ No API key needed. Runs entirely offline.
 import os
 import sys
 import uuid
+import traceback
 from datetime import datetime
 
+from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import ScreenManager, Screen
-from kivy.metrics import dp, sp
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
 from kivy.clock import Clock
+from kivy.metrics import dp, sp
+from kivy.graphics import Color, RoundedRectangle, Rectangle
+from kivy.core.window import Window
 
 from kivymd.app import MDApp
-from kivymd.uix.button import MDRectangleFlatButton, MDFlatButton
+from kivymd.uix.button import MDRectangleFlatButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.card import MDCard
-from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.theming import ThemeManager
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,81 +33,104 @@ sys.path.insert(0, APP_DIR)
 
 from roxy_brain import RoxyBrain
 import chat_history
+from app_logger import logger, get_log_content
 
 
-class ChatBubble(MDBoxLayout):
-    """A single chat bubble — Roxy's or the user's."""
+class ChatBubble(BoxLayout):
+    """A single message bubble — pure Kivy for stability."""
 
     def __init__(self, text, is_roxy=True, **kwargs):
         super().__init__(**kwargs)
         self.orientation = "vertical"
+        self.size_hint_y = None
+        self.size_hint_x = 0.88
         self.padding = [dp(12), dp(8), dp(12), dp(8)]
         self.spacing = dp(2)
-        self.size_hint_x = 0.85
-        self.size_hint_y = None
-        self.height = dp(60)  # minimum, will grow via label
-        self.md_bg_color = (
+
+        # Background canvas
+        bg_color = (
             [0.85, 0.3, 0.5, 0.15] if is_roxy else [0.2, 0.2, 0.3, 0.3]
         )
-        self.radius = [dp(12), dp(12), dp(12), dp(12)]
-        self.pos_hint = {"x": 0} if is_roxy else {"right": 1}
+        with self.canvas.before:
+            Color(*bg_color)
+            self.bg_rect = RoundedRectangle(
+                pos=self.pos, size=self.size, radius=[dp(8)]
+            )
+        self.bind(pos=self._update_bg, size=self._update_bg)
 
-        # Name
-        name = "Roxy <3" if is_roxy else "You"
-        name_lbl = MDLabel(
-            text=name,
-            font_style="Caption",
-            theme_text_color="Custom",
-            text_color=[0.85, 0.3, 0.5, 1] if is_roxy else [0.6, 0.6, 0.8, 1],
+        # Alignment
+        if is_roxy:
+            self.pos_hint = {"x": 0}
+        else:
+            self.pos_hint = {"right": 1}
+
+        # Name tag
+        name_text = "Roxy <3" if is_roxy else "You"
+        name_lbl = Label(
+            text=name_text,
             size_hint_y=None,
             height=dp(18),
             font_size=sp(11),
             halign="left" if is_roxy else "right",
+            color=[0.85, 0.3, 0.5, 1] if is_roxy else [0.7, 0.7, 0.9, 1],
         )
         self.add_widget(name_lbl)
 
-        # Message
-        halign = "left" if is_roxy else "right"
-        self.msg_lbl = MDLabel(
+        # Message text - the key: let Kivy size it via texture_size
+        msg_color = (1, 1, 1, 0.92) if is_roxy else (1, 1, 1, 0.82)
+        self.msg_lbl = Label(
             text=text,
-            theme_text_color="Custom",
-            text_color=[1, 1, 1, 0.95] if is_roxy else [1, 1, 1, 0.85],
             size_hint_y=None,
+            height=dp(24),
             font_size=sp(15),
-            halign=halign,
+            halign="left" if is_roxy else "right",
             valign="top",
+            color=msg_color,
+            text_size=(None, None),  # no wrapping bound
         )
-        self.msg_lbl.bind(texture_size=self._on_texture)
+        self.msg_lbl.bind(texture_size=lambda inst, val: self._resize(inst))
         self.add_widget(self.msg_lbl)
 
         # Timestamp
-        now = datetime.now().strftime("%H:%M")
-        time_lbl = MDLabel(
-            text=now,
-            font_style="Caption",
-            theme_text_color="Custom",
-            text_color=[0.5, 0.5, 0.6, 0.6],
+        time_text = datetime.now().strftime("%H:%M")
+        time_lbl = Label(
+            text=time_text,
             size_hint_y=None,
             height=dp(14),
             font_size=sp(10),
-            halign=halign,
+            halign="left" if is_roxy else "right",
+            color=[0.5, 0.5, 0.6, 0.6],
         )
         self.add_widget(time_lbl)
 
-    def _on_texture(self, instance, _texture_size):
-        """Called when the label's texture is ready — set the bubble height."""
-        if getattr(self, "_resizing", False):
-            return
-        self._resizing = True
+        # Set initial height to prevent 0-height issues
+        self.height = dp(60)
+        # Schedule a proper height calc after layout
+        Clock.schedule_once(lambda dt: self._calc_height(), 0.05)
+
+    def _resize(self, instance):
+        """Set label height to match its text content."""
         try:
             if instance.texture:
-                instance.height = max(dp(24), instance.texture_size[1])
-            else:
-                instance.height = dp(24)
-            total = sum(c.height for c in self.children if hasattr(c, "height")) + dp(24)
-            self.height = max(dp(50), total)
-        finally:
-            self._resizing = False
+                h = max(dp(20), instance.texture_size[1])
+                instance.height = h
+                self._calc_height()
+        except Exception:
+            pass
+
+    def _calc_height(self):
+        """Sum children heights for total bubble height."""
+        try:
+            total = sum(
+                c.height for c in self.children if hasattr(c, "height") and c.height
+            )
+            self.height = max(dp(50), total + dp(24))
+        except Exception:
+            self.height = dp(80)
+
+    def _update_bg(self, *args):
+        self.bg_rect.pos = self.pos
+        self.bg_rect.size = self.size
 
 
 class HistoryScreen(Screen):
@@ -185,7 +214,6 @@ class HistoryScreen(Screen):
                 md_bg_color=[0.15, 0.15, 0.2, 1],
                 elevation=0,
             )
-
             info = BoxLayout(orientation="vertical", spacing=dp(2))
             preview_label = MDLabel(
                 text=preview if preview else "(empty)",
@@ -218,7 +246,6 @@ class HistoryScreen(Screen):
             load_btn.conv_id = conv_id
             load_btn.bind(on_release=lambda x: self.load_conv(x.conv_id))
             card.add_widget(load_btn)
-
             self.list_layout.add_widget(card)
 
     def load_conv(self, conv_id):
@@ -254,7 +281,7 @@ class SettingsScreen(Screen):
         form = BoxLayout(
             orientation="vertical",
             spacing=dp(16),
-            size_hint_y=0.7,
+            size_hint_y=0.6,
             padding=[0, dp(20), 0, 0],
         )
 
@@ -338,8 +365,19 @@ class SettingsScreen(Screen):
         )
         save_btn.bind(on_release=lambda x: self.app_ref.save_settings())
         btn_row.add_widget(save_btn)
-
         layout.add_widget(btn_row)
+
+        # Log viewer button
+        log_btn = MDRectangleFlatButton(
+            text="View Debug Log",
+            size_hint_y=0.08,
+            md_bg_color=[0.15, 0.15, 0.2, 1],
+            theme_text_color="Custom",
+            text_color=[0.6, 0.6, 0.8, 1],
+        )
+        log_btn.bind(on_release=lambda x: self.app_ref.show_log())
+        layout.add_widget(log_btn)
+
         self.add_widget(layout)
 
     def on_enter(self):
@@ -347,6 +385,50 @@ class SettingsScreen(Screen):
         self.name_input.text = brain.user_name if brain.user_name != "there" else ""
         self.age_input.text = brain.user_age or ""
         self.game_input.text = brain.user_fav_game or ""
+
+
+class LogScreen(Screen):
+    """Simple screen showing the last 100 lines of the log."""
+
+    def __init__(self, app, **kwargs):
+        super().__init__(**kwargs)
+        self.app_ref = app
+        layout = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(12))
+        header = BoxLayout(size_hint_y=0.08, spacing=dp(8))
+        back_btn = MDRectangleFlatButton(
+            text="\u2190 Back",
+            font_size="16sp",
+            size_hint_x=0.3,
+            md_bg_color=[0.15, 0.15, 0.2, 1],
+            theme_text_color="Custom",
+            text_color=[0.85, 0.3, 0.5, 1],
+        )
+        back_btn.bind(on_release=lambda x: app.close_log())
+        header.add_widget(back_btn)
+        title = MDLabel(
+            text="Debug Log",
+            font_style="H5",
+            theme_text_color="Custom",
+            text_color=[0.85, 0.3, 0.5, 1],
+            halign="center",
+        )
+        header.add_widget(title)
+
+        layout.add_widget(header)
+        self.log_label = MDLabel(
+            text="Loading...",
+            theme_text_color="Custom",
+            text_color=[0.7, 0.7, 0.9, 1],
+            font_size=sp(11),
+            size_hint_y=0.85,
+        )
+        scroll = ScrollView(size_hint_y=0.85)
+        scroll.add_widget(self.log_label)
+        layout.add_widget(scroll)
+        self.add_widget(layout)
+
+    def on_enter(self):
+        self.log_label.text = get_log_content() or "(log is empty)"
 
 
 class ChatScreen(Screen):
@@ -360,9 +442,8 @@ class ChatScreen(Screen):
             orientation="vertical", spacing=dp(4), padding=[dp(8), dp(8), dp(8), dp(8)]
         )
 
-        # Header with plain text buttons
+        # Header
         header = BoxLayout(size_hint_y=0.07, spacing=dp(8))
-
         title = MDLabel(
             text="Roxy <3",
             font_style="H5",
@@ -393,7 +474,6 @@ class ChatScreen(Screen):
         )
         history_btn.bind(on_release=lambda x: self.app_ref.open_history())
         header.add_widget(history_btn)
-
         layout.add_widget(header)
 
         # Chat area
@@ -432,20 +512,31 @@ class ChatScreen(Screen):
         )
         send_btn.bind(on_release=lambda x: self.app_ref.send_message())
         input_area.add_widget(send_btn)
-
         layout.add_widget(input_area)
         self.add_widget(layout)
 
     def add_message(self, text, is_roxy=True):
-        bubble = ChatBubble(text, is_roxy=is_roxy)
-        self.chat_layout.add_widget(bubble)
-        Clock.schedule_once(lambda dt: setattr(self.chat_scroll, "scroll_y", 0), 0.15)
+        try:
+            bubble = ChatBubble(text, is_roxy=is_roxy)
+            self.chat_layout.add_widget(bubble)
+            Clock.schedule_once(
+                lambda dt: setattr(self.chat_scroll, "scroll_y", 0), 0.2
+            )
+        except Exception:
+            logger.exception("add_message failed")
 
 
 class RoxyApp(MDApp):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.brain = RoxyBrain(os.path.join(APP_DIR, "config.json"))
+        logger.info("App starting...")
+        try:
+            self.brain = RoxyBrain(os.path.join(APP_DIR, "config.json"))
+            logger.info("Brain initialized")
+        except Exception as e:
+            logger.error(f"Brain init failed: {e}")
+            self.brain = RoxyBrain(None)
+
         self.conversation_id = str(uuid.uuid4())
         self.messages = []
         self.theme_cls = ThemeManager()
@@ -454,43 +545,64 @@ class RoxyApp(MDApp):
 
     def build(self):
         self.sm = ScreenManager()
-
         self.chat_screen = ChatScreen(self, name="chat")
         self.settings_screen = SettingsScreen(self, name="settings")
         self.history_screen = HistoryScreen(self, name="history")
-
+        self.log_screen = LogScreen(self, name="log_view")
         self.sm.add_widget(self.chat_screen)
         self.sm.add_widget(self.settings_screen)
         self.sm.add_widget(self.history_screen)
-
+        self.sm.add_widget(self.log_screen)
         Clock.schedule_once(lambda dt: self.show_welcome(), 0.5)
         return self.sm
 
     def show_welcome(self):
-        intro = self.brain.get_intro()
-        self.chat_screen.add_message(intro, is_roxy=True)
-        self.messages.append({"role": "roxy", "text": intro})
-
-    def send_message(self):
-        text = self.chat_screen.chat_input.text.strip()
-        if not text:
-            return
-
-        self.chat_screen.add_message(text, is_roxy=False)
-        self.messages.append({"role": "user", "text": text})
-        self.chat_screen.chat_input.text = ""
-
         try:
-            response = self.brain.get_response(text)
-        except Exception:
-            response = (
-                "*her ears flicker* Sorry, circuits got crossed there for a sec."
-                " What were you saying?"
+            intro = self.brain.get_intro()
+            logger.info(f"Welcome: {intro[:100]}")
+            self.chat_screen.add_message(intro, is_roxy=True)
+            self.messages.append({"role": "roxy", "text": intro})
+        except Exception as e:
+            logger.error(f"show_welcome failed: {e}")
+            self.chat_screen.add_message(
+                "Hey... circuits are warming up. Give me a sec?", is_roxy=True
             )
 
-        self.chat_screen.add_message(response, is_roxy=True)
-        self.messages.append({"role": "roxy", "text": response})
-        chat_history.save_conversation(self.conversation_id, self.messages)
+    def send_message(self):
+        try:
+            text = self.chat_screen.chat_input.text.strip()
+            if not text:
+                return
+            logger.info(f"Sending message: {text[:50]}")
+
+            # User bubble
+            self.chat_screen.add_message(text, is_roxy=False)
+            self.messages.append({"role": "user", "text": text})
+            self.chat_screen.chat_input.text = ""
+
+            # Roxy's response
+            try:
+                response = self.brain.get_response(text)
+                logger.info(f"Response generated: {response[:50]}")
+            except Exception as brain_err:
+                logger.error(f"get_response failed: {brain_err}")
+                response = (
+                    "*her ears flicker* Sorry, circuits got crossed there for"
+                    " a sec. What were you saying?"
+                )
+
+            self.chat_screen.add_message(response, is_roxy=True)
+            self.messages.append({"role": "roxy", "text": response})
+
+            # Save
+            try:
+                chat_history.save_conversation(self.conversation_id, self.messages)
+                logger.debug("Conversation saved")
+            except Exception as save_err:
+                logger.error(f"Save failed: {save_err}")
+
+        except Exception as e:
+            logger.error(f"send_message CRASH: {e}\n{traceback.format_exc()}")
 
     def open_settings(self):
         self.sm.current = "settings"
@@ -499,20 +611,22 @@ class RoxyApp(MDApp):
         self.sm.current = "chat"
 
     def save_settings(self):
-        name = self.settings_screen.name_input.text.strip()
-        age = self.settings_screen.age_input.text.strip()
-        game = self.settings_screen.game_input.text.strip()
-
-        if name:
-            self.brain.set_user_info("name", name)
-        if age:
-            self.brain.set_user_info("age", age)
-        if game:
-            self.brain.set_user_info("fav_game", game)
-
-        confirm = f"Got it{', ' + name if name else ''}! I'll remember that."
-        self.chat_screen.add_message(confirm, is_roxy=True)
-        self.messages.append({"role": "roxy", "text": confirm})
+        try:
+            name = self.settings_screen.name_input.text.strip()
+            age = self.settings_screen.age_input.text.strip()
+            game = self.settings_screen.game_input.text.strip()
+            if name:
+                self.brain.set_user_info("name", name)
+            if age:
+                self.brain.set_user_info("age", age)
+            if game:
+                self.brain.set_user_info("fav_game", game)
+            confirm = f"Got it{', ' + name if name else ''}! I'll remember that."
+            self.chat_screen.add_message(confirm, is_roxy=True)
+            self.messages.append({"role": "roxy", "text": confirm})
+            logger.info(f"Settings saved: name={name}, age={age}, game={game}")
+        except Exception as e:
+            logger.error(f"save_settings crashed: {e}")
         self.sm.current = "chat"
 
     def open_history(self):
@@ -521,15 +635,30 @@ class RoxyApp(MDApp):
     def close_history(self):
         self.sm.current = "chat"
 
+    def show_log(self):
+        self.sm.current = "log_view"
+
+    def close_log(self):
+        self.sm.current = "settings"
+
     def load_conversation(self, data):
-        self.conversation_id = data.get("id", str(uuid.uuid4()))
-        self.messages = data.get("messages", [])
-        self.chat_screen.chat_layout.clear_widgets()
-        for msg in self.messages:
-            is_roxy = msg["role"] == "roxy"
-            self.chat_screen.add_message(msg["text"], is_roxy=is_roxy)
+        try:
+            self.conversation_id = data.get("id", str(uuid.uuid4()))
+            self.messages = data.get("messages", [])
+            self.chat_screen.chat_layout.clear_widgets()
+            for msg in self.messages:
+                is_roxy = msg["role"] == "roxy"
+                self.chat_screen.add_message(msg["text"], is_roxy=is_roxy)
+            logger.info(f"Loaded conversation: {self.conversation_id[:8]}")
+        except Exception as e:
+            logger.error(f"load_conversation crashed: {e}")
         self.sm.current = "chat"
 
 
 if __name__ == "__main__":
-    RoxyApp().run()
+    try:
+        logger.info("=== Roxy IRL starting ===")
+        RoxyApp().run()
+    except Exception as e:
+        logger.critical(f"App CRASHED: {e}\n{traceback.format_exc()}")
+        raise
