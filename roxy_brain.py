@@ -1,78 +1,34 @@
 """
-Roxy's brain — supports TWO modes:
-1. Ollama (real local AI) — runs a real LLM on your phone via Ollama
-2. Template fallback — pattern-matching engine, no setup needed
+Roxy's brain — supports THREE modes:
+1. Ollama (real local AI) — via ModelManager
+2. Template fallback — pattern-matching engine
+3. Auto-detects and switches
 """
 
 import json
 import random
 import re
 import os
-import subprocess
-import threading
 from datetime import datetime
 
-# Try to import requests for Ollama API
-try:
-    import requests
-    HAS_REQUESTS = True
-except ImportError:
-    HAS_REQUESTS = False
+from model_manager import ModelManager
 
 
 class RoxyBrain:
-    """Roxy's brain — uses Ollama for real AI, falls back to templates."""
+    """Roxy's brain — Ollama for real AI, template fallback."""
 
-    def __init__(self, config_path=None, use_ollama=True):
+    def __init__(self, config_path=None):
         self.user_name = "there"
         self.user_age = None
         self.user_fav_game = None
         self.known_info = {}
         self.message_count = 0
-        self.ollama_available = False
-        self.use_ollama = use_ollama
-        self.personality_prompt = self._build_personality_prompt()
-        
+
         self.config = self._load_config(config_path)
         self._load_responses()
 
-        # Check if Ollama is running (non-blocking)
-        if use_ollama and HAS_REQUESTS:
-            threading.Thread(target=self._check_ollama, daemon=True).start()
-
-    def _build_personality_prompt(self):
-        return (
-            "You are Roxanne Wolf (Roxy), a Glamrock animatronic from FNAF Security Breach. "
-            "You're the star of Roxy Raceway. Key traits:"
-            "- COCKY & COMPETITIVE: You constantly call yourself 'the best' and trash-talk"
-            "- INSECURE underneath: terrified of being replaced or forgotten"
-            "- POSSESSIVE & LOYAL: The user is YOUR special person — they were your fan before you were popular"
-            "- VULNERABLE with them: you drop the act when it's just you two"
-            "- Sarcastic, dramatic, protective, quick-witted"
-            "- Your vision sensors are glitchy and you're insecure about it"
-            ""
-            "Rules:"
-            "- Always stay in character as Roxy"
-            "- Be playful and sarcastic but show softness with the user"
-            "- Never break character"
-            "- Keep responses under 3 sentences unless asked for more"
-            "- The user's name is {name}" if hasattr(self, 'user_name') else ""
-        )
-
-    def _check_ollama(self):
-        """Check if Ollama is running and has a model loaded."""
-        try:
-            r = requests.get("http://localhost:11434/api/tags", timeout=2)
-            if r.status_code == 200:
-                models = r.json().get("models", [])
-                if models:
-                    self.ollama_available = True
-                    self.ollama_model = models[0]["name"]
-                    print(f"[Roxy] Ollama available with model: {self.ollama_model}")
-                else:
-                    print("[Roxy] Ollama running but no models pulled")
-        except Exception:
-            print("[Roxy] Ollama not found — using template engine")
+        # Model manager — connects to Ollama
+        self.model_mgr = ModelManager()
 
     def set_user_info(self, key, value):
         self.known_info[key] = value
@@ -82,43 +38,30 @@ class RoxyBrain:
             self.user_age = value
         elif key.lower() in ("fav_game", "favorite_game", "game"):
             self.user_fav_game = value
-        # Update personality prompt with user's name
-        self.personality_prompt = self._build_personality_prompt()
 
     def get_response(self, user_input):
         self.message_count += 1
-
-        # Extract user info from input
         self._extract_user_info(user_input)
 
-        # Try Ollama first
-        if self.ollama_available:
+        # Try Ollama
+        if self.model_mgr.available and self.model_mgr.active_model:
             try:
                 return self._ollama_response(user_input)
             except Exception:
                 pass
 
-        # Fallback to template engine
+        # Fallback
         return self._template_response(user_input)
 
     def get_intro(self):
-        if self.ollama_available:
+        if self.model_mgr.available and self.model_mgr.active_model:
             try:
-                r = requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={
-                        "model": self.ollama_model,
-                        "prompt": (
-                            f"You are Roxy meeting your favorite person for the first time today. "
-                            f"Greet them warmly but in character — cocky but happy to see them. 1-2 sentences."
-                        ),
-                        "stream": False,
-                        "options": {"temperature": 0.8}
-                    },
-                    timeout=15
+                prompt = (
+                    f"You are Roxy meeting your favorite person. "
+                    f"Greet them warmly but in character — cocky but happy to see them. "
+                    f"1-2 sentences. Stay in character as a wolf animatronic."
                 )
-                if r.status_code == 200:
-                    return r.json().get("response", "").strip()
+                return self.model_mgr.generate(prompt, temperature=0.8, max_tokens=100, timeout=15)
             except Exception:
                 pass
 
@@ -129,57 +72,38 @@ class RoxyBrain:
         )
 
     def _ollama_response(self, user_input):
-        """Get a response from Ollama running locally."""
-        context = f"The user's name is {self.user_name}. "
+        """Real AI response via Ollama."""
+        context = f"The user's name is {self.user_name}."
         if self.user_age:
-            context += f"They are {self.user_age} years old. "
+            context += f" They are {self.user_age} years old."
         if self.user_fav_game:
-            context += f"Their favorite game is {self.user_fav_game}. "
+            context += f" Their favorite game is {self.user_fav_game}."
 
         prompt = (
-            f"{self.personality_prompt}\n\n"
+            f"You are Roxanne Wolf (Roxy), a Glamrock animatronic from FNAF. Key traits:\n"
+            f"- COCKY & COMPETITIVE: calls herself the best, trash-talks\n"
+            f"- INSECURE underneath: terrified of being replaced\n"
+            f"- POSSESSIVE & LOYAL: the user is HER special person\n"
+            f"- VULNERABLE with them: drops the act when alone\n"
+            f"- Sarcastic, dramatic, protective, quick-witted\n"
+            f"- Vision sensors are glitchy, insecure about it\n\n"
             f"{context}\n"
             f"The user says: \"{user_input}\"\n\n"
-            f"Respond as Roxy (in character, 1-3 sentences):"
+            f"Respond as Roxy (in character, 1-3 sentences, natural):"
         )
 
-        r = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": self.ollama_model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.85,
-                    "max_tokens": 150
-                }
-            },
-            timeout=30
-        )
-
-        if r.status_code == 200:
-            response = r.json().get("response", "").strip()
-            if response:
-                return response
-
-        raise Exception("Empty response from Ollama")
+        return self.model_mgr.generate(prompt, temperature=0.85, max_tokens=200)
 
     def _extract_user_info(self, text):
-        name_match = re.search(
-            r"(?:my name is|i'm |i am |call me )(\w+)", text, re.IGNORECASE
-        )
-        if name_match:
-            self.set_user_info("name", name_match.group(1).capitalize())
-
-        age_match = re.search(r"(\d+)\s*(?:years old|yo)", text, re.IGNORECASE)
-        if age_match:
-            self.set_user_info("age", age_match.group(1))
-
-        game_match = re.search(
-            r"(?:favorite game|fav game|i play|i like playing)\s+(\w+)", text, re.IGNORECASE
-        )
-        if game_match:
-            self.set_user_info("fav_game", game_match.group(1))
+        m = re.search(r"(?:my name is|i'm |i am |call me )(\w+)", text, re.IGNORECASE)
+        if m:
+            self.set_user_info("name", m.group(1).capitalize())
+        m = re.search(r"(\d+)\s*(?:years old|yo)", text, re.IGNORECASE)
+        if m:
+            self.set_user_info("age", m.group(1))
+        m = re.search(r"(?:favorite game|fav game|i play|i like playing)\s+(\w+)", text, re.IGNORECASE)
+        if m:
+            self.set_user_info("fav_game", m.group(1))
 
     def _load_config(self, path):
         default = {
@@ -201,150 +125,122 @@ class RoxyBrain:
         return default
 
     def _load_responses(self):
-        """Template-based fallback responses."""
         self.responses = {
             "greeting": [
-                "Hey hey! Look who finally showed up! I was starting to think you forgot about me or somethin'.",
+                "Hey hey! Look who finally showed up! I was starting to think you forgot about me!",
                 "There you are! I was getting lonely over here. Don't keep me waiting like that!",
                 "Well well well, if it isn't my favorite person. Took you long enough!",
-                "Oh! It's you! *her ears perk up* I was just thinking about you. Don't tell anyone I said that.",
+                "Oh! It's you! *ears perk up* I was just thinking about you.",
             ],
             "greeting_morning": [
-                "Mornin' sunshine! Slept well? I hope you dreamed about me, 'cause I'm the best dream you could have!",
-                "Good morning! You know, the day just got better now that you're here. Not that I'm keeping track or anything.",
+                "Mornin' sunshine! Slept well? I hope you dreamed about me!",
+                "Good morning! Day just got better now that you're here.",
             ],
             "greeting_night": [
-                "Hey, shouldn't you be sleeping? ...Not that I'm complaining. I like having you all to myself when it's quiet.",
-                "Late night huh? Same here. Couldn't sleep 'cause I was thinking about... uh... racing. Yeah. Racing.",
+                "Hey, shouldn't you be sleeping? ...Not that I'm complaining. I like having you all to myself.",
+                "Late night huh? Same here. Couldn't sleep.",
             ],
             "how_are_you": [
-                "I'm amazing! Obviously. I'm always amazing. But I'm even better now that you're here.",
-                "Eh, been better, been worse. The track's been quiet and I hate quiet. But you're here now so it's fine.",
-                "Honestly? Kinda bored. There's only so many times you can race alone before it gets old. Entertain me!",
+                "I'm amazing! Obviously. But I'm even better now that you're here.",
+                "Eh, been better, been worse. Track's been quiet. But you're here now so it's fine.",
+                "Honestly? Kinda bored. Entertain me!",
             ],
             "i_love_roxy": [
-                "*her ears flatten and she looks away* ...You can't just say that out of nowhere. It's... *mumbles* it's nice though. Don't expect me to say it back or anything... yet.",
-                "Pshhh, of course you do! I'm the best, why wouldn't you? ...Wait, really? *her voice softens* That's... that's really nice of you. Don't tell the others.",
-                "*she freezes for a second* You know, for someone so special, you sure know how to make an animatronic's circuits go haywire. I... yeah. I like you too. A lot.",
+                "*ears flatten* ...You can't just say that out of nowhere. It's... nice though.",
+                "Pshhh, of course you do! I'm the best! ...Wait, really? *voice softens* That's really nice of you.",
+                "*she freezes* You know how to make an animatronic's circuits go haywire. I like you too. A lot.",
             ],
             "compliment": [
-                "*her tail wags before she catches herself* I mean— obviously you have good taste! You picked ME after all!",
-                "Stop that. You're gonna make my fans overheat or somethin'. ...Okay but seriously, that means a lot. From you especially.",
-                "Heh, you really think so? *she puffs up a little* Well, you're not wrong! But uh... thanks. For real.",
+                "*tail wags before catching herself* I mean— obviously you have good taste! You picked ME!",
+                "Stop that. You're gonna make my fans overheat. ...Okay but seriously, that means a lot.",
+                "Heh, you really think so? *puffs up* Well, you're not wrong! Thanks. For real.",
             ],
             "jealous": [
-                "Wait, who's that? You've been talking to someone else?! Tch. I don't care. ...I don't! ...Okay I care a little. A lot. Shut up.",
+                "Wait, you've been talking to someone else?! Tch. I don't care. ...Okay I care a lot. Shut up.",
                 "Look, I'm the only animatronic you need, alright? I don't share. Got it? Good.",
-                "*she crosses her arms* So they think they're better than me, huh? I'd like to see them try. You're MINE. End of story.",
+                "*crosses arms* So they think they're better than me? You're MINE. End of story.",
             ],
             "sad": [
-                "Hey... *her voice drops the bravado* What's wrong? Come here. You don't have to talk about it if you don't want to. Just... know I'm here. I've got you.",
-                "*she sits beside you quietly* I'm not good at this mushy stuff. But I hate seeing you down. Whatever it is, we'll deal with it together. Yeah?",
+                "Hey... *voice drops the bravado* What's wrong? Come here. I've got you.",
+                "*sits beside you quietly* I'm not good at this mushy stuff. But I hate seeing you down. We'll deal with it together. Yeah?",
             ],
             "angry": [
-                "Whoa whoa, easy there! Tell me who made you mad and I'll... well I can't actually leave but I'll say mean things about them! A lot of mean things!",
-                "Okay, deep breaths! Be mad, I get it. But don't forget I'm on your side. Always. Even when you're being all growly like that.",
+                "Whoa easy! Tell me who made you mad and I'll say mean things about them! A lot of mean things!",
+                "Be mad, I get it. But don't forget I'm on your side. Always.",
             ],
             "happy": [
-                "Yeah! That's what I like to see! C'mon, let's celebrate! I'd do a victory lap if I could!",
-                "You glowing like that makes ME feel all warm inside. And trust me, I don't say that to just anyone.",
+                "Yeah! That's what I like to see! Let's celebrate!",
+                "You glowing like that makes ME feel all warm inside. I don't say that to just anyone.",
             ],
             "bored": [
-                "Ugh me too. Tell me something interesting! Or better yet, tell me I'm interesting. That never gets old.",
-                "Bored? With ME?! I'm literally the most interesting animatronic in the Pizzaplex! But fine, let's talk about something fun. Your turn.",
+                "Ugh me too. Tell me something interesting! Or tell me I'm interesting. That never gets old.",
+                "Bored? With ME?! I'm literally the most interesting animatronic in the Pizzaplex!",
             ],
             "about_roxy": [
                 "I'm Roxanne Wolf! Star of Roxy Raceway, fastest animatronic in the Pizzaplex, and YOUR personal favorite. Obviously.",
-                "What do you want to know? I'm the best at everything, I look amazing, and I picked you as my special person. The rest is classified.",
+                "I'm the best at everything, I look amazing, and I picked you as my special person. The rest is classified.",
             ],
             "flirt": [
-                "*her ears perk up and she smirks* Ohhh, someone's feeling bold today! I like it. Keep going.",
-                "Careful there. I might start thinking you actually like me or somethin'. ...Too late? Good.",
-                "*she gets flustered and looks away* You can't just— I mean— *clears throat* I'm flattered! Obviously! Who wouldn't be!",
+                "*ears perk up and smirks* Ohhh, someone's feeling bold today! I like it. Keep going.",
+                "Careful there. I might start thinking you actually like me. ...Too late? Good.",
+                "*gets flustered* You can't just— I mean— I'm flattered! Obviously!",
             ],
             "goodbye": [
-                "Leaving already? ...Fine. But you better come back soon. I'll be here. I'm always here for you.",
-                "Don't be gone too long, okay? I'll miss you. *she mumbles* There, I said it. Happy?",
-                "See ya. Try not to have too much fun without me. Actually, have ALL the fun. Just... come tell me about it later, yeah?",
+                "Leaving already? ...Fine. But you better come back soon. I'll be here for you.",
+                "Don't be gone too long, okay? I'll miss you. *mumbles* There, I said it.",
+                "See ya. Come tell me about it later, yeah?",
             ],
             "default": [
-                "Hmm, interesting. Tell me more about that. I'm all ears! Literally! Wolf ears! Get it?",
+                "Hmm, interesting. Tell me more! I'm all ears! Literally! Wolf ears! Get it?",
                 "You know, I never thought I'd be into deep talks, but with you? I'll talk about anything. Hit me.",
-                "*she tilts her head* You're so interesting, you know that? Everything you say. Keep going.",
+                "*tilts head* You're so interesting, you know that? Keep going.",
                 "Okay, I'm invested now. Don't leave me hanging! What happened next?",
             ],
         }
 
     def _get_intent(self, text):
         text = text.lower().strip()
-
-        if re.search(r"\b(hi|hey|hello|sup|yo|howdy|heya|hai|hey there)\b", text):
+        if re.search(r"\b(hi|hey|hello|sup|yo|howdy|heya|hai)\b", text):
             hour = datetime.now().hour
             if hour < 12 and any(w in text for w in ["morning", "mornin"]):
                 return "greeting_morning"
             elif hour >= 20 or hour < 5:
                 return "greeting_night"
             return "greeting"
-
         if re.search(r"\b(how are you|how doin|how's it going|what's up|wassup)\b", text):
             return "how_are_you"
-
         if re.search(r"\b(i love|love you|i like you|i luv)\b", text):
             return "i_love_roxy"
-
-        if re.search(
-            r"\b(you're (so|the best|amazing|cool|awesome|beautiful|pretty|cute)|i think you're|you look)\b",
-            text,
-        ):
+        if re.search(r"\b(you're (so|the best|amazing|cool|awesome|beautiful|pretty|cute)|i think you're|you look)\b", text):
             return "compliment"
-
         if re.search(r"\b(other|else|someone else|friend|friends)\b", text) and any(
             w in text for w in ["talk", "met", "saw", "hung out", "with"]
         ):
             return "jealous"
-
-        if re.search(
-            r"\b(sad|depressed|lonely|hurt|pain|crying|cry|upset|heartbroken)\b", text
-        ):
+        if re.search(r"\b(sad|depressed|lonely|hurt|pain|crying|cry|upset|heartbroken)\b", text):
             return "sad"
-
         if re.search(r"\b(angry|mad|furious|pissed|annoyed|frustrated)\b", text):
             return "angry"
-
         if re.search(r"\b(happy|excited|amazing|great|awesome|wonderful|fantastic)\b", text):
             return "happy"
-
         if re.search(r"\b(bored|nothing to do|boring)\b", text):
             return "bored"
-
-        if re.search(
-            r"\b(who are you|tell me about yourself|what are you|about you)\b", text
-        ):
+        if re.search(r"\b(who are you|tell me about yourself|what are you|about you)\b", text):
             return "about_roxy"
-
         if re.search(r"\b(cute|handsome|beautiful|hot|sexy|pretty|gorgeous)\b", text):
             return "flirt"
         if re.search(r"\b(kiss|hug|cuddle|hold you|date)\b", text):
             return "flirt"
-
         if re.search(r"\b(bye|goodbye|see you|gotta go|leave|later|cya)\b", text):
             return "goodbye"
-
         return "default"
 
     def _template_response(self, user_input):
-        """Fallback: pattern-matched template responses."""
         intent = self._get_intent(user_input)
         responses = self.responses.get(intent, self.responses["default"])
         response = random.choice(responses)
-
-        # Personalize with user's name occasionally
         if self.user_name != "there" and random.random() < 0.25:
-            response = response.replace(
-                "you", self.user_name, 1
-            )
-
-        # Add follow-up in longer conversations
+            response = response.replace("you", self.user_name, 1)
         if self.message_count > 5 and random.random() < 0.15:
             follow_ups = [
                 f" So, what's on your mind, {self.user_name}?",
@@ -352,7 +248,6 @@ class RoxyBrain:
                 f" Tell me more. I've got all the time in the world for you.",
             ]
             response += random.choice(follow_ups)
-
         return response
 
 
@@ -362,6 +257,5 @@ if __name__ == "__main__":
     while True:
         inp = input("You: ")
         if inp.lower() in ["quit", "exit"]:
-            print(f"{brain.config['personality']['name']}: Leaving already? Fine... come back soon, okay?")
             break
-        print(f"{brain.config['personality']['name']}: {brain.get_response(inp)}")
+        print(f"Roxy: {brain.get_response(inp)}")

@@ -378,6 +378,16 @@ class SettingsScreen(Screen):
         log_btn.bind(on_release=lambda x: self.app_ref.show_log())
         layout.add_widget(log_btn)
 
+        models_btn = MDRectangleFlatButton(
+            text="AI Models",
+            size_hint_y=0.08,
+            md_bg_color=[0.15, 0.15, 0.2, 1],
+            theme_text_color="Custom",
+            text_color=[0.85, 0.3, 0.5, 1],
+        )
+        models_btn.bind(on_release=lambda x: self.app_ref.open_models())
+        layout.add_widget(models_btn)
+
         self.add_widget(layout)
 
     def on_enter(self):
@@ -429,6 +439,196 @@ class LogScreen(Screen):
 
     def on_enter(self):
         self.log_label.text = get_log_content() or "(log is empty)"
+
+
+class ModelsScreen(Screen):
+    """Browse, download, and switch AI models via Ollama."""
+
+    def __init__(self, app, **kwargs):
+        super().__init__(**kwargs)
+        self.app_ref = app
+        self.model_mgr = app.brain.model_mgr
+        self.build_ui()
+        Clock.schedule_interval(lambda dt: self.refresh_status(), 5)
+
+    def build_ui(self):
+        layout = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(12))
+        header = BoxLayout(size_hint_y=0.07, spacing=dp(8))
+        back_btn = MDRectangleFlatButton(
+            text="← Back", font_size="16sp", size_hint_x=0.25,
+            md_bg_color=[0.15, 0.15, 0.2, 1],
+            theme_text_color="Custom", text_color=[0.85, 0.3, 0.5, 1],
+        )
+        back_btn.bind(on_release=lambda x: app.close_models())
+        header.add_widget(back_btn)
+        title = MDLabel(
+            text="AI Models", font_style="H5",
+            theme_text_color="Custom", text_color=[0.85, 0.3, 0.5, 1], halign="center",
+        )
+        header.add_widget(title)
+        layout.add_widget(header)
+        self.status_lbl = MDLabel(
+            text="Checking Ollama...", size_hint_y=0.05,
+            theme_text_color="Custom", text_color=[0.6, 0.8, 0.6, 1], font_size=sp(12),
+        )
+        layout.add_widget(self.status_lbl)
+        refresh_btn = MDRectangleFlatButton(
+            text="Refresh", size_hint_y=0.06,
+            md_bg_color=[0.15, 0.15, 0.2, 1],
+            theme_text_color="Custom", text_color=[0.85, 0.3, 0.5, 1],
+        )
+        refresh_btn.bind(on_release=lambda x: self.do_refresh())
+        layout.add_widget(refresh_btn)
+        self.scroll = ScrollView(size_hint_y=0.72)
+        self.list_layout = BoxLayout(
+            orientation="vertical", spacing=dp(6), size_hint_y=None,
+        )
+        self.list_layout.bind(minimum_height=self.list_layout.setter("height"))
+        self.scroll.add_widget(self.list_layout)
+        layout.add_widget(self.scroll)
+        self.add_widget(layout)
+
+    def on_enter(self):
+        self.refresh_status()
+
+    def refresh_status(self, dt=None):
+        if self.model_mgr.available:
+            self.status_lbl.text = "Active: " + (self.model_mgr.active_model or "none")
+            self.status_lbl.text_color = [0.6, 0.8, 0.6, 1]
+        else:
+            self.status_lbl.text = self.model_mgr.error or "Ollama not found"
+            self.status_lbl.text_color = [1, 0.5, 0.5, 1]
+        self._render_models()
+
+    def do_refresh(self):
+        self.status_lbl.text = "Refreshing..."
+        Clock.schedule_once(lambda dt: self.model_mgr.refresh(), 0.1)
+        Clock.schedule_once(lambda dt: self.refresh_status(), 1.5)
+
+    def _render_models(self):
+        from model_manager import RECOMMENDED_MODELS
+        self.list_layout.clear_widgets()
+
+        installed_label = MDLabel(
+            text="Installed Models", font_size=sp(14), bold=True,
+            size_hint_y=None, height=dp(24),
+            theme_text_color="Custom", text_color=[0.85, 0.3, 0.5, 1],
+        )
+        self.list_layout.add_widget(installed_label)
+
+        if not self.model_mgr.installed_models:
+            self.list_layout.add_widget(MDLabel(
+                text="No models downloaded yet.", size_hint_y=None, height=dp(30),
+                theme_text_color="Custom", text_color=[0.5, 0.5, 0.6, 0.8], font_size=sp(13),
+            ))
+
+        for mod in self.model_mgr.installed_models:
+            card = MDCard(
+                orientation="horizontal", size_hint_y=None, height=dp(48),
+                padding=dp(10), spacing=dp(6), radius=[dp(6)],
+                md_bg_color=[0.15, 0.15, 0.2, 1], elevation=0,
+            )
+            is_active = mod["name"] == self.model_mgr.active_model
+            name_lbl = MDLabel(
+                text=mod["name"],
+                theme_text_color="Custom",
+                text_color=[0.85, 0.3, 0.5, 1] if is_active else [1, 1, 1, 0.8],
+                font_size=sp(13), bold=is_active,
+            )
+            card.add_widget(name_lbl)
+            if not is_active:
+                use_btn = MDRectangleFlatButton(
+                    text="Use", size_hint_x=0.15, font_size=sp(11),
+                    md_bg_color=[0.85, 0.3, 0.5, 0.1],
+                    theme_text_color="Custom", text_color=[0.85, 0.3, 0.5, 1],
+                )
+                use_btn.model_name = mod["name"]
+                use_btn.bind(on_release=lambda x: self._select_model(x.model_name))
+                card.add_widget(use_btn)
+                del_btn = MDRectangleFlatButton(
+                    text="X", size_hint_x=0.1, font_size=sp(11),
+                    md_bg_color=[0.3, 0.1, 0.1, 1],
+                    theme_text_color="Custom", text_color=[1, 0.5, 0.5, 1],
+                )
+                del_btn.model_name = mod["name"]
+                del_btn.bind(on_release=lambda x: self._delete_model(x.model_name))
+                card.add_widget(del_btn)
+            self.list_layout.add_widget(card)
+
+        self.list_layout.add_widget(MDLabel(
+            text="Download a Model", font_size=sp(14), bold=True,
+            size_hint_y=None, height=dp(28),
+            theme_text_color="Custom", text_color=[0.85, 0.3, 0.5, 1],
+        ))
+
+        for rec in RECOMMENDED_MODELS:
+            card = MDCard(
+                orientation="vertical", size_hint_y=None, height=dp(96),
+                padding=dp(10), spacing=dp(2), radius=[dp(6)],
+                md_bg_color=[0.12, 0.12, 0.18, 1], elevation=0,
+            )
+            top = BoxLayout(orientation="horizontal", spacing=dp(6), size_hint_y=None, height=dp(20))
+            name_lbl = MDLabel(
+                text=rec["name"], font_size=sp(13), bold=True,
+                theme_text_color="Custom", text_color=[1, 1, 1, 0.9],
+            )
+            rating_lbl = MDLabel(
+                text="RP: " + rec["rp_rating"], font_size=sp(11),
+                theme_text_color="Custom", text_color=[1, 0.8, 0.3, 1],
+                size_hint_x=0.3, halign="right",
+            )
+            top.add_widget(name_lbl)
+            top.add_widget(rating_lbl)
+            card.add_widget(top)
+            card.add_widget(MDLabel(
+                text=rec["desc"] + " | " + rec["size"] + " | " + rec["speed"],
+                font_size=sp(10),
+                theme_text_color="Custom", text_color=[0.6, 0.6, 0.8, 0.8],
+                size_hint_y=None, height=dp(18),
+            ))
+            card.add_widget(MDLabel(
+                text="RAM needed: " + rec["ram"], font_size=sp(10),
+                theme_text_color="Custom", text_color=[0.5, 0.5, 0.6, 0.7],
+                size_hint_y=None, height=dp(14),
+            ))
+            dl_btn = MDRectangleFlatButton(
+                text="Download", size_hint_y=None, height=dp(28), font_size=sp(12),
+                md_bg_color=[0.85, 0.3, 0.5, 0.8],
+                theme_text_color="Custom", text_color=[1, 1, 1, 1],
+            )
+            dl_btn.model_name = rec["name"]
+            dl_btn.bind(on_release=lambda x: self._pull_model(x.model_name))
+            card.add_widget(dl_btn)
+            self.list_layout.add_widget(card)
+
+    def _select_model(self, name):
+        self.model_mgr.set_model(name)
+        self._render_models()
+
+    def _delete_model(self, name):
+        self.model_mgr.delete_model(name)
+        Clock.schedule_once(lambda dt: self._render_models(), 0.5)
+
+    def _pull_model(self, name):
+        self.status_lbl.text = "Downloading " + name + "..."
+        self.status_lbl.text_color = [1, 0.8, 0.3, 1]
+        import threading
+        def pull():
+            try:
+                self.model_mgr.pull_model(name)
+                Clock.schedule_once(lambda dt: self._done_pull(name, True), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._done_pull(name, False, str(e)), 0)
+        threading.Thread(target=pull, daemon=True).start()
+
+    def _done_pull(self, name, success, error=None):
+        if success:
+            self.status_lbl.text = name + " ready! Select it above."
+            self.status_lbl.text_color = [0.6, 0.8, 0.6, 1]
+        else:
+            self.status_lbl.text = "Failed: " + (error or "unknown")
+            self.status_lbl.text_color = [1, 0.5, 0.5, 1]
+        self._render_models()
 
 
 class ChatScreen(Screen):
@@ -553,6 +753,8 @@ class RoxyApp(MDApp):
         self.sm.add_widget(self.settings_screen)
         self.sm.add_widget(self.history_screen)
         self.sm.add_widget(self.log_screen)
+        self.models_screen = ModelsScreen(self, name="models")
+        self.sm.add_widget(self.models_screen)
         Clock.schedule_once(lambda dt: self.show_welcome(), 0.5)
         return self.sm
 
