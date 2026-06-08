@@ -228,8 +228,8 @@ class RoxyBrain:
     def get_intro(self):
         name = self.config.get("personality", {}).get("name", "Roxy")
         return (
-            f"Hey hey! Finally! I was wondering when you'd show up!\\n"
-            f"I'm {name} — fastest wolf in the Pizzaplex and YOUR personal favorite.\\n"
+            f"Hey hey! Finally! I was wondering when you'd show up!\n"
+            f"I'm {name} — fastest wolf in the Pizzaplex and YOUR personal favorite.\n"
             f"Anyway, talk to me! What's your name?"
         )
 
