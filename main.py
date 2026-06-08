@@ -531,11 +531,11 @@ class RoxyApp(MDApp):
         super().__init__(**kwargs)
         logger.info("App starting...")
         try:
-            self.brain = RoxyBrain(os.path.join(APP_DIR, "config.json"))
+            self.brain = RoxyBrain(os.path.join(APP_DIR, "config.json"), use_ollama=True)
             logger.info("Brain initialized")
         except Exception as e:
             logger.error(f"Brain init failed: {e}")
-            self.brain = RoxyBrain(None)
+            self.brain = RoxyBrain(None, use_ollama=True)
 
         self.conversation_id = str(uuid.uuid4())
         self.messages = []
